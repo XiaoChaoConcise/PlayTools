@@ -184,19 +184,19 @@ var keymappingSelectors = [#selector(UIApplication.switchEditorMode(_:)),
 /// ongoing configuration block that persists across system rebuilds,
 /// and observes NSApplication.didBecomeActiveNotification to re-register.
 class MenuController {
-    // Keep a strong reference to prevent ARC deallocation on macOS 26
-    private var strongSelf: MenuController?
+    /// Held as a static strong reference so the object and its observer
+    /// survive across macOS 26 menu rebuild cycles.
     private static var sharedInstance: MenuController?
     private var rebuildObserver: NSObjectProtocol?
 
     init(with builder: UIMenuBuilder) {
+        // Keep self alive across menu rebuild cycles
         Self.sharedInstance = self
-        self.strongSelf = self
 
         #if canImport(UIKit.UIMainMenuSystem)
         if #available(iOS 26.0, *) {
-            // macOS 26 / iOS 26: Use UIMainMenuSystem ongoing configuration
-            // This ensures custom menus persist across system rebuilds
+            // macOS 26 / iOS 26: Use UIMainMenuSystem ongoing configuration.
+            // This ensures custom menus persist across system rebuilds.
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                 guard let self = self else { return }
 
@@ -207,8 +207,8 @@ class MenuController {
                     self?.setupMenu(with: builder)
                 }
 
-                // macOS 26: Rebuild menus when app becomes active
-                // (fixes menu disappearing after fullscreen toggle)
+                // macOS 26: Rebuild menus when app becomes active.
+                // Fixes menu disappearing after fullscreen toggle.
                 self.rebuildObserver = NotificationCenter.default.addObserver(
                     forName: NSNotification.Name("NSApplicationDidBecomeActiveNotification"),
                     object: nil,
@@ -231,13 +231,11 @@ class MenuController {
         }
     }
 
-    /// Manually trigger a menu rebuild
+    /// Manually trigger a menu rebuild.
     @objc func rebuild() {
         #if canImport(UIKit.UIMainMenuSystem)
         if #available(iOS 26.0, *) {
-            // Request the system rebuild the menu
-            // This triggers setBuildConfiguration's closure again
-            DispatchQueue.main.async { [weak self] in
+            DispatchQueue.main.async {
                 UIMainMenuSystem.shared.setNeedsRebuild()
             }
         }
