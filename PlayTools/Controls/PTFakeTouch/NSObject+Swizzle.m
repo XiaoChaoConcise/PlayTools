@@ -11,7 +11,9 @@
 #import "UIKit/UIKit.h"
 #import <PlayTools/PlayTools-Swift.h>
 #import "PTFakeMetaTouch.h"
+#if !TARGET_OS_MACCATALYST
 #import <VideoSubscriberAccount/VideoSubscriberAccount.h>
+#endif
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMotion/CoreMotion.h>
 #import <GameController/GameController.h>
@@ -135,8 +137,6 @@ __attribute__((visibility("hidden")))
 }
 
 - (double) hook_scale {
-    // Return rounded value of [[PlaySettings shared] customScaler]
-    // Even though it is a double return, this will only accept .0 value or apps will crash
     return round([[PlaySettings shared] customScaler]);
 }
 
@@ -157,15 +157,16 @@ __attribute__((visibility("hidden")))
     return NO;
 }
 
+#if !TARGET_OS_MACCATALYST
 - (void) hook_setCurrentSubscription:(VSSubscription *)currentSubscription {
     // do nothing
 }
+#endif
 
 - (NSString *)hook_stringByReplacingOccurrencesOfRegularExpressionPattern:(NSString *)pattern
                                                              withTemplate:(NSString *)template
                                                                   options:(NSRegularExpressionOptions)options
                                                                     range:(NSRange)range {
-    // If the string is empty, return immediately to prevent a range out-of-bounds error.
     if ([(NSString*)self isEqualToString:@""]) {
         return @"";
     }
@@ -186,7 +187,6 @@ __attribute__((visibility("hidden")))
 
 - (instancetype)hook_CMMotionManager_init {
     CMMotionManager *motionManager = (CMMotionManager *)[self hook_CMMotionManager_init];
-    // The default update interval is 0, which may lead to excessive CPU usage
     motionManager.accelerometerUpdateInterval = 0.01;
     motionManager.deviceMotionUpdateInterval = 0.01;
     motionManager.gyroUpdateInterval = 0.01;
@@ -201,12 +201,6 @@ __attribute__((visibility("hidden")))
     return @[];
 }
 
-// Hook for UIUserInterfaceIdiom
-
-// - (long long) hook_userInterfaceIdiom {
-//     return UIUserInterfaceIdiomPad;
-// }
-
 bool menuWasCreated = false;
 - (id) initWithRootMenuHook:(id)rootMenu {
     self = [self initWithRootMenuHook:rootMenu];
@@ -219,34 +213,8 @@ bool menuWasCreated = false;
 
 @end
 
-/*
- This class only exists to apply swizzles from the +load of a class that won't have any categories/extensions. The reason
- for not doing this in a C module initializer is that obj-c initialization happens before any __attribute__((constructor))
- is called. This way we can guarantee the hooks will be applied before [PlayCover launch] is called (in PlayLoader.m).
- 
- Side note:
- While adding method replacements to NSObject does work, I'm not certain this doesn't (or won't) have any side effects. The
- way Apple does method swizzling internally is by creating a category of the swizzled class and adding the replacements there.
- This keeps all those replacements "local" to that class. Example:
- 
- '''
- @interface FBSSceneSettings (Swizzle)
- -(CGRect) hook_frame {
-    ...
- }
- @end
- 
- Somewhere else:
- swizzle(FBSSceneSettings.class, @selector(frame), @selector(hook_frame);
- '''
- 
- However, doing this would require generating @interface declarations (either with class-dump or by hand) which would add a lot
- of code and complexity. I'm not sure this trade-off is "worth it", at least at the time of writing.
- */
-
 @implementation PTSwizzleLoader
 + (void)load {
-    // This might need refactor soon
     if(@available(iOS 16.3, *)) {
         if ([[PlaySettings shared] resizableWindow]) {
             [objc_getClass("_UIApplicationInfoParser") swizzleInstanceMethod:NSSelectorFromString(@"requiresFullScreen") withMethod:@selector(hook_requiresFullScreen)];
@@ -255,10 +223,7 @@ bool menuWasCreated = false;
             [objc_getClass("UIScreen") swizzleInstanceMethod:@selector(scale) withMethod:@selector(hook_scale)];
         }
         else if ([[PlaySettings shared] adaptiveDisplay]) {
-            // This is an experimental fix
             if ([[PlaySettings shared] inverseScreenValues]) {
-                // This lines set External Scene settings and other IOS10 Runtime services by swizzling
-                // In Sonoma 14.1 betas, frame method seems to be moved to FBSSceneSettingsCore
                 if(@available(iOS 17.1, *))
                     [objc_getClass("FBSSceneSettingsCore") swizzleExchangeMethod:@selector(frame) withMethod:@selector(hook_frameDefault)];
                 else
@@ -266,13 +231,11 @@ bool menuWasCreated = false;
                 [objc_getClass("FBSSceneSettings") swizzleInstanceMethod:@selector(bounds) withMethod:@selector(hook_boundsDefault)];
                 [objc_getClass("FBSDisplayMode") swizzleInstanceMethod:@selector(size) withMethod:@selector(hook_sizeDelfault)];
                 
-                // Fixes Apple mess at MacOS 13.2
                 [objc_getClass("UIDevice") swizzleInstanceMethod:@selector(orientation) withMethod:@selector(hook_orientation)];
                 [objc_getClass("UIScreen") swizzleInstanceMethod:@selector(nativeBounds) withMethod:@selector(hook_nativeBoundsDefault)];
                 [objc_getClass("UIScreen") swizzleInstanceMethod:@selector(nativeScale) withMethod:@selector(hook_nativeScale)];
                 [objc_getClass("UIScreen") swizzleInstanceMethod:@selector(scale) withMethod:@selector(hook_scale)];
             } else {
-                // This acutally runs when adaptiveDisplay is normally triggered
                 if(@available(iOS 17.1, *))
                     [objc_getClass("FBSSceneSettingsCore") swizzleExchangeMethod:@selector(frame) withMethod:@selector(hook_frame)];
                 else
@@ -288,7 +251,6 @@ bool menuWasCreated = false;
         }
         else {
             if ([[PlaySettings shared] windowFixMethod] == 1) {
-                // do nothing:tm:
             }
             else {
                 CGFloat newValueW = (CGFloat) [self get_default_width];
@@ -325,14 +287,12 @@ bool menuWasCreated = false;
     
     [objc_getClass("_UIMenuBuilder") swizzleInstanceMethod:sel_getUid("initWithRootMenu:") withMethod:@selector(initWithRootMenuHook:)];
     [objc_getClass("IOSViewController") swizzleInstanceMethod:@selector(prefersPointerLocked) withMethod:@selector(hook_prefersPointerLocked)];
-    // Set idiom to iPad
-    // [objc_getClass("UIDevice") swizzleInstanceMethod:@selector(userInterfaceIdiom) withMethod:@selector(hook_userInterfaceIdiom)];
-    // [objc_getClass("UITraitCollection") swizzleInstanceMethod:@selector(userInterfaceIdiom) withMethod:@selector(hook_userInterfaceIdiom)];
 
+#if !TARGET_OS_MACCATALYST
     [objc_getClass("VSSubscriptionRegistrationCenter") swizzleInstanceMethod:@selector(setCurrentSubscription:) withMethod:@selector(hook_setCurrentSubscription:)];
+#endif
 
     if (PlayInfo.isUnrealEngine) {
-        // Fix NSRegularExpression crash when system language is set to Chinese
         CFStringEncoding encoding = CFStringGetSystemEncoding();
         if (encoding == kCFStringEncodingMacChineseSimp || encoding == kCFStringEncodingMacChineseTrad) {
             SEL origSelector = NSSelectorFromString(@"_stringByReplacingOccurrencesOfRegularExpressionPattern:withTemplate:options:range:");
