@@ -1,5 +1,5 @@
 /*
- See LICENSE folder for this sample’s licensing information.
+ See LICENSE folder for this sample's licensing information.
  
  Abstract:
  Menu construction extensions for this sample.
@@ -172,25 +172,74 @@ var keymappingSelectors = [#selector(UIApplication.switchEditorMode(_:)),
                            #selector(UIApplication.nextKeymap(_:))
     ]
 
+/// macOS 26 Tahoe compatibility note:
+/// ==================================
+/// On macOS 26 (Tahoe), the system aggressively rebuilds the menu bar when:
+/// 1. The app resigns active status (e.g. fullscreen toggle)
+/// 2. System-level menu refresh occurs
+/// 3. Any UIMenu rebuild is triggered
+///
+/// When this happens, UIMenuBuilder-injected custom menus are discarded.
+/// The fix uses UIMainMenuSystem.setBuildConfiguration() to register an
+/// ongoing configuration block that persists across system rebuilds,
+/// and observes NSApplication.didBecomeActiveNotification to re-register.
 class MenuController {
+    /// Held as a static strong reference so the object and its observer
+    /// survive across macOS 26 menu rebuild cycles.
+    private static var sharedInstance: MenuController?
+    private var rebuildObserver: NSObjectProtocol?
+
     init(with builder: UIMenuBuilder) {
-    #if canImport(UIKit.UIMainMenuSystem)
+        // Keep self alive across menu rebuild cycles
+        Self.sharedInstance = self
+
+        #if canImport(UIKit.UIMainMenuSystem)
         if #available(iOS 26.0, *) {
-            // Delay to avoid error
-            // Cannot set a main menu system configuration while the main menu system is building.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            // macOS 26 / iOS 26: Use UIMainMenuSystem ongoing configuration.
+            // This ensures custom menus persist across system rebuilds.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                guard let self = self else { return }
+
                 let configuration = UIMainMenuSystem.Configuration()
                 configuration.sidebarPreference = .included
-                UIMainMenuSystem.shared.setBuildConfiguration(configuration) { builder in
-                    self.setupMenu(with: builder)
+
+                UIMainMenuSystem.shared.setBuildConfiguration(configuration) { [weak self] builder in
+                    self?.setupMenu(with: builder)
+                }
+
+                // macOS 26: Rebuild menus when app becomes active.
+                // Fixes menu disappearing after fullscreen toggle.
+                self.rebuildObserver = NotificationCenter.default.addObserver(
+                    forName: NSNotification.Name("NSApplicationDidBecomeActiveNotification"),
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.rebuild()
                 }
             }
         } else {
             setupMenu(with: builder)
         }
-    #else
+        #else
         setupMenu(with: builder)
-    #endif
+        #endif
+    }
+
+    deinit {
+        if let observer = rebuildObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    /// Manually trigger a menu rebuild.
+    @objc func rebuild() {
+        #if canImport(UIKit.UIMainMenuSystem)
+        if #available(iOS 26.0, *) {
+            DispatchQueue.main.async {
+                UIMainMenuSystem.shared.setNeedsRebuild()
+            }
+        }
+        #endif
     }
 
     func setupMenu(with builder: UIMenuBuilder) {
